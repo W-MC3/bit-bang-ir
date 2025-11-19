@@ -1,133 +1,142 @@
+#define F_CPU 16000000UL
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
-#include <stdio.h>
-#include <stdint.h>
+#include "uart.h"
 
-#include "usart.h"
-#include "twi.h"
-#include "hd44780pcf8574.h"
-#include "ultrasonic.h"
-#include "buzzer.h"
-#include "filter.h"
-#include "adc.h"
-#include "7seg.h"
+#define IR_LED_PIN PB3     // D3 → IR LED output
+#define IR_RECEIVE_PIN PD2 // D2 → IR receiver (INT0)
 
-/* ---------- Config / constants ---------- */
-#define LCD_ADDR 0x27
-#define MAX_DIST_CM 65
-#define FREQ_MIN 230U
-#define FREQ_MAX 1400U
-#define FILTER_MIN 1U
-#define FILTER_MAX 15U
-#define BTN_DOWN PD4
-#define BTN_UP PD5
+#define MAX_BUFFER 32
 
-/* ---------- Buttons ---------- */
-static void Buttons_Init(void)
+volatile uint8_t rx_buffer[MAX_BUFFER]; // ontvangen bytes buffer
+volatile uint8_t rx_index = 0;          // index in buffer
+volatile uint8_t bit_index = 0;         // bit teller
+volatile uint8_t received_byte = 0;     // byte in opbouw
+
+volatile uint8_t transmitting = 0; // zendstatus
+
+//------------------- Carrier signal -------------------//
+void carrier_on(uint16_t duration_us)
 {
-    DDRD &= ~((1 << BTN_DOWN) | (1 << BTN_UP));
-    PORTD |= (1 << BTN_DOWN) | (1 << BTN_UP);
-}
-static void Buttons_Handle(void)
-{
-    if (!(PIND & (1 << BTN_UP)))
+    uint16_t cycles = duration_us / 26; // 26us periode ~ 38 kHz
+    for (uint16_t i = 0; i < cycles; i++)
     {
-        _delay_ms(25);
-        if (!(PIND & (1 << BTN_UP)))
-        {
-            uint8_t size = Filter_GetSize();
-            if (size < FILTER_MAX)
-                Filter_SetSize(size + 1);
-            while (!(PIND & (1 << BTN_UP)))
-                _delay_ms(5);
-        }
-    }
-    if (!(PIND & (1 << BTN_DOWN)))
-    {
-        _delay_ms(25);
-        if (!(PIND & (1 << BTN_DOWN)))
-        {
-            uint8_t size = Filter_GetSize();
-            if (size > FILTER_MIN)
-                Filter_SetSize(size - 1);
-            while (!(PIND & (1 << BTN_DOWN)))
-                _delay_ms(5);
-        }
+        PORTB |= (1 << IR_LED_PIN);
+        _delay_us(13);
+        PORTB &= ~(1 << IR_LED_PIN);
+        _delay_us(13);
     }
 }
 
-/* ---------- Main ---------- */
+//------------------- Bit & Byte verzenden -------------------//
+void send_bit(uint8_t bit)
+{
+    if (bit)
+    {
+        carrier_on(600); // '1'
+        _delay_us(600);
+    }
+    else
+    {
+        carrier_on(300); // '0'
+        _delay_us(600);
+    }
+}
+
+void send_byte(uint8_t byte)
+{
+    transmitting = 1;
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        send_bit((byte >> i) & 0x01); // LSB eerst
+    }
+    transmitting = 0;
+}
+
+//------------------- String verzenden -------------------//
+void send_string(const char *str)
+{
+    send_byte(0xFF); // Start byte
+    for (; *str; str++)
+    {
+        send_byte(*str);
+        _delay_ms(50); // korte pauze tussen bytes
+    }
+    send_byte(0xAA); // Einde byte
+}
+
+//------------------- Processing_rx_buffer-------------------//
+void process_rx_buffer(void)
+{
+    if (rx_index == 0)
+        return;
+
+    if (rx_buffer[0] == 0xFF)
+    { // startbyte
+        // Print string tot ACK
+        for (uint8_t i = 1; i < rx_index; i++)
+        {
+            if (rx_buffer[i] == 0xAA)
+                break;                    // einde van de string
+            uart_send_char(rx_buffer[i]); // stuur karakter naar UART
+        }
+        uart_send_char('\n'); // optioneel: newline
+    }
+    rx_index = 0; // buffer reset
+}
+
+//------------------- Ontvangen via INT0 -------------------//
+ISR(INT0_vect)
+{
+    static uint32_t last_time = 0;
+    uint32_t now = TCNT1;
+    uint32_t pulse_width = now - last_time;
+    last_time = now;
+
+    if (pulse_width > 500)
+    { // filter voor '1'
+        received_byte |= (1 << bit_index);
+    }
+
+    bit_index++;
+    if (bit_index >= 8)
+    {
+        // volledige byte ontvangen
+        if (rx_index < MAX_BUFFER)
+        {
+            rx_buffer[rx_index++] = received_byte;
+        }
+        received_byte = 0;
+        bit_index = 0;
+    }
+}
+
+//------------------- Main -------------------//
 int main(void)
 {
-    USART_Init();
-    ADC_Init();
-    TWI_Init();
-    Ultrasonic_Init();
-    Buzzer_Init();
-    Filter_Init(5);
-    SevenSeg_Init();
 
-    HD44780_PCF8574_Init(LCD_ADDR);
-    HD44780_PCF8574_DisplayOn(LCD_ADDR);
-    HD44780_PCF8574_DisplayClear(LCD_ADDR);
-    HD44780_PCF8574_PositionXY(LCD_ADDR, 0, 0);
-    HD44780_PCF8574_DrawString(LCD_ADDR, "Theremin Ready");
-    Buttons_Init();
-    sei();
+    DDRB |= (1 << IR_LED_PIN) | (1 << PB0); // PB0 als test output
+    PORTB &= ~(1 << IR_LED_PIN);
 
-    _delay_ms(800);
-    HD44780_PCF8574_DisplayClear(LCD_ADDR);
+    // int0 setup
+    EICRA |= (1 << ISC00); // Rising edge
+    EIMSK |= (1 << INT0);  // Enable INT0
 
-    char line1[17], line2[17];
+    // Timer1 setup
+    TCCR1B |= (1 << WGM12) | (1 << CS10);
+    TCNT1 = 0;
+
+    uart_init(9600);
+    sei(); // Enable global interrupts
 
     while (1)
     {
-        Ultrasonic_Trigger();
-        _delay_ms(50);
+        // Voorbeeld: zend een string elke 5 seconden
+        send_string("Hello World");
+        _delay_ms(5000);
 
-        if (Ultrasonic_IsReady())
-        {
-            uint16_t distance = Ultrasonic_GetDistance();
-            Filter_AddValue(distance);
-            uint16_t filtered = Filter_GetMedian();
-            if (filtered > MAX_DIST_CM)
-                filtered = MAX_DIST_CM;
-
-            uint32_t span = (uint32_t)FREQ_MAX - (uint32_t)FREQ_MIN;
-            uint16_t freq = (uint16_t)((uint32_t)FREQ_MAX -
-                                       ((uint32_t)filtered * span / (uint32_t)MAX_DIST_CM));
-
-            /* Volume uitlezen en opslaan */
-            uint8_t volume = ADC_GetValue();
-            Buzzer_SetVolume(volume);
-
-            float scale = 0.5f + (volume / 510.0f); // 0..255 -> 0.5..1.0
-            uint16_t effectiveFreq = (uint16_t)(freq * scale);
-            if (effectiveFreq < FREQ_MIN)
-                effectiveFreq = FREQ_MIN;
-            if (effectiveFreq > FREQ_MAX)
-                effectiveFreq = FREQ_MAX;
-
-            Buzzer_Update(effectiveFreq);
-
-            /* LCD bijwerken */
-            snprintf(line1, sizeof(line1), "Dist:%3ucm", (unsigned)filtered);
-            snprintf(line2, sizeof(line2), "Freq:%4uHz V:%3u", (unsigned)effectiveFreq, (unsigned)volume);
-            HD44780_PCF8574_DisplayClear(LCD_ADDR);
-            _delay_ms(2);
-            HD44780_PCF8574_PositionXY(LCD_ADDR, 0, 0);
-            HD44780_PCF8574_DrawString(LCD_ADDR, line1);
-            HD44780_PCF8574_PositionXY(LCD_ADDR, 0, 1);
-            HD44780_PCF8574_DrawString(LCD_ADDR, line2);
-
-            /* 7-seg: filtergrootte */
-            SevenSeg_DisplayHex(Filter_GetSize());
-
-            Buttons_Handle();
-        }
-
-        _delay_ms(100);
+        // Verwerk ontvangen data
+        process_rx_buffer();
     }
-    return 0;
 }
