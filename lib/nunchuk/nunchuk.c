@@ -1,10 +1,10 @@
 /****************************************************************************************
-* File:         Nunchuk.c
-* Authors:       bRAM, Michiel Dirks
-* Created on:   20-11-2025
-* Company:      Windesheim
-* Website:      https://www.windesheim.nl/opleidingen/voltijd/bachelor/ict-zwolle
-****************************************************************************************/
+ * File:         Nunchuk.c
+ * Authors:       bRAM, Michiel Dirks
+ * Created on:   20-11-2025
+ * Company:      Windesheim
+ * Website:      https://www.windesheim.nl/opleidingen/voltijd/bachelor/ict-zwolle
+ ****************************************************************************************/
 
 /*
  * nunchuk library
@@ -15,27 +15,27 @@
  * Nunchuk has 256 byte memory, which can be requested by setting
  * an offset (write) and requesting a defined amount of data (read)
  * The amount of data appears to be max 32 bytes
- * 
+ *
  * bRAM, Michiel
  */
 #include <util/delay.h>
-#include "../../src/HAL/I2C/twi.h"
+#include "twi.h"
 #include "nunchuk.h"
 
 // nunchuk memory addresses
-#define NCSTATE	0x00	// address of state (6 bytes)
-#define NCCAL	0x20	// address of callibration data (16 bytes)
-#define NCID	0xFA	// address of id (4 bytes)
+#define NCSTATE 0x00 // address of state (6 bytes)
+#define NCCAL 0x20	 // address of callibration data (16 bytes)
+#define NCID 0xFA	 // address of id (4 bytes)
 
-#define CHUNKLEN	32
-#define STATELEN	6
-#define CALLEN		16
+#define CHUNKLEN 32
+#define STATELEN 6
+#define CALLEN 16
 
-#define WAITFORREAD	1	// ms
+#define WAITFORREAD 1 // ms
 
 // nibble to hex ascii
 char btoa[] = {'0', '1', '2', '3', '4', '5', '6', '7',
-		'8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+			   '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
 
 /* ---- initialize variables ---- */
 uint8_t buffer[CHUNKLEN];
@@ -45,20 +45,23 @@ static bool nunchuk_get_id(uint8_t address);
 static uint8_t nunchuk_read(uint8_t address, uint8_t offset, uint8_t len);
 
 /* ---- public functions ---- */
- 
+
 /*
  * do the handschake
  */
-bool nunchuk_begin(uint8_t address) {
+bool nunchuk_begin(uint8_t address)
+{
 
 	TWI_MT_Start();
 	TWI_Transmit_SLAW(address);
 
-	if (ENCODED) {
+	if (ENCODED)
+	{
 		TWI_Transmit_Byte(0x40);
 		TWI_Transmit_Byte(0x00);
 	}
-	else {
+	else
+	{
 		TWI_Transmit_Byte(0xF0);
 		TWI_Transmit_Byte(0x55);
 		TWI_Stop();
@@ -91,7 +94,8 @@ bool nunchuk_begin(uint8_t address) {
  *	byte 4: AZ[9:2]
  *	byte 5: AZ[1:0], AY[1:0], AX[1:0], BC, BZ
  */
-bool nunchuk_get_state(uint8_t address) {
+bool nunchuk_get_state(uint8_t address)
+{
 	// read state from memory address
 	if (nunchuk_read(address, NCSTATE, STATELEN) != STATELEN)
 		return false;
@@ -129,7 +133,8 @@ bool nunchuk_get_state(uint8_t address) {
  *	byte 14: CHKSUM1[7:0]
  *	byte 15: CHKSUM2[7:0]
  */
-bool nunchuk_get_calibration(uint8_t address) {
+bool nunchuk_get_calibration(uint8_t address)
+{
 	// read state from memory address
 	if (nunchuk_read(address, NCCAL, CALLEN) != CALLEN)
 		return false;
@@ -147,7 +152,7 @@ bool nunchuk_get_calibration(uint8_t address) {
 	cal.ymin = buffer[11];
 	cal.ymax = buffer[12];
 	cal.ycenter = buffer[13];
-	cal.chksum = (buffer[14]<<8)|buffer[15];
+	cal.chksum = (buffer[14] << 8) | buffer[15];
 
 	return true;
 }
@@ -157,19 +162,21 @@ bool nunchuk_get_calibration(uint8_t address) {
 /*
  * get the device id (nunchuk should be 0xA4200000)
  */
-static bool nunchuk_get_id(uint8_t address) {
+static bool nunchuk_get_id(uint8_t address)
+{
 	// read data from address
-	if(nunchuk_read(address, NCID, IDLEN) != IDLEN)
+	if (nunchuk_read(address, NCID, IDLEN) != IDLEN)
 		return false;
 
 	// copy buffer to id string
 	id[0] = '0';
 	id[1] = 'x';
-	for (uint8_t i=0; i < IDLEN; i++) {
-		id[2+2*i] = btoa[(buffer[i]>>4)];
-		id[2+2*i+1] = btoa[(buffer[i]&0x0F)];
+	for (uint8_t i = 0; i < IDLEN; i++)
+	{
+		id[2 + 2 * i] = btoa[(buffer[i] >> 4)];
+		id[2 + 2 * i + 1] = btoa[(buffer[i] & 0x0F)];
 	}
-	id[2*IDLEN+2] = '\0';
+	id[2 * IDLEN + 2] = '\0';
 
 	return true;
 }
@@ -179,20 +186,21 @@ static bool nunchuk_get_id(uint8_t address) {
  */
 static uint8_t nunchuk_decode(uint8_t b)
 {
-	return (b^0x17) + 0x17;
+	return (b ^ 0x17) + 0x17;
 }
 
 /*
  * read buffer
  */
-static uint8_t nunchuk_read(uint8_t address, uint8_t offset, uint8_t len) {
+static uint8_t nunchuk_read(uint8_t address, uint8_t offset, uint8_t len)
+{
 	uint8_t n = 0;
 
 	// send offset
 	TWI_MT_Start();
 	TWI_Transmit_SLAW(address);
 
-    TWI_Transmit_Byte(offset);
+	TWI_Transmit_Byte(offset);
 
 	TWI_Stop();
 
@@ -203,9 +211,9 @@ static uint8_t nunchuk_read(uint8_t address, uint8_t offset, uint8_t len) {
 	TWI_MT_Start();
 	TWI_Transmit_SLAR(address);
 
-
 	// read bytes
-	for (n = 0; n < len; n++) {
+	for (n = 0; n < len; n++)
+	{
 		// Read n-th byte
 		bool ack = n < (len - 1);
 		buffer[n] = TWI_Receive_Byte(ack);
