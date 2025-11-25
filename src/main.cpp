@@ -94,6 +94,10 @@ void tx_next_bit()
 #define RX_PIN 2
 #define RX_PORT PIND
 #define RX_DDR DDRD
+
+// ====================================================================
+// Hier gaat fout
+// ====================================================================
 void rx_init() { RX_DDR &= ~(1 << RX_PIN); }
 
 void rx_next_bit()
