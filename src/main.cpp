@@ -2,12 +2,13 @@
 #include <avr/interrupt.h>
 #include <util/delay.h>
 #include <stdio.h>
+#include <string.h>
 
 #define F_CPU 16000000UL
 #define BAUD 9600
 #define MYUBRR F_CPU / 16 / BAUD - 1
 
-// ================= UART (Hardware Debug) =================
+// ================= UART (Debugging) =================
 void uart_init()
 {
     UBRR0H = (MYUBRR >> 8);
@@ -51,11 +52,11 @@ void carrier_off()
     PORTD &= ~(1 << PD6);                       // Force Low
 }
 
-// ================= Software TX (IR) =================
+// ================= Software TX (Sending) =================
 volatile uint8_t tx_busy = 0;
 volatile uint8_t tx_idx = 0;
 volatile uint8_t tx_bit_pos = 0;
-volatile uint8_t tx_frame[64]; // Increased buffer size
+volatile uint8_t tx_frame[64];
 volatile uint8_t tx_len;
 
 void start_send_frame(uint8_t *frame, uint8_t len)
@@ -96,7 +97,7 @@ void tx_next_bit()
     }
 }
 
-// ================= Software RX (IR) =================
+// ================= Software RX (Receiving) =================
 #define RX_PIN PD2
 #define RX_PORT PIND
 #define RX_DDR DDRD
@@ -117,7 +118,6 @@ volatile uint8_t rx_tail = 0;
 
 void rx_init() { RX_DDR &= ~(1 << RX_PIN); }
 
-// Call this to reset receiver to look for 0x55 again
 void rx_reset_sync()
 {
     rx_state = RX_STATE_SYNC;
@@ -147,18 +147,18 @@ void rx_next_bit()
     // 3. State Machine
     if (rx_state == RX_STATE_SYNC)
     {
-        // Look for Preamble 0x55 (01010101)
+        // Hunting for Preamble 0x55 (01010101)
         if (rx_byte_buffer == 0x55)
         {
             rx_state = RX_STATE_DATA;
             rx_bit_count = 0;
-            rx_push_byte(0x55); // Push the sync byte itself
-            rx_byte_buffer = 0; // Clear for next byte
+            rx_push_byte(0x55); // Push the sync byte
+            rx_byte_buffer = 0;
         }
     }
     else
     {
-        // RX_STATE_DATA: Collect 8 bits blindly
+        // RX_STATE_DATA: Collect 8 bits
         rx_bit_count++;
         if (rx_bit_count >= 8)
         {
@@ -172,12 +172,9 @@ void rx_next_bit()
 // ================= Timer2 1ms Tick =================
 void timer2_init()
 {
-    // CTC Mode is often better for precise timing than normal mode
-    TCCR2A = (1 << WGM21);
-    TCCR2B = (1 << CS22); // Prescaler 64 -> 16MHz/64 = 250kHz ticks
-    // We want 1ms (1000Hz). 250000 / 1000 = 250 ticks.
-    // OCR2A = 249 (0-249 is 250 counts)
-    OCR2A = 249;
+    TCCR2A = (1 << WGM21); // CTC Mode
+    TCCR2B = (1 << CS22);  // Prescaler 64
+    OCR2A = 249;           // (16MHz / 64 / 1000Hz) - 1 = 249
     TIMSK2 |= (1 << OCIE2A);
 }
 
@@ -189,7 +186,7 @@ ISR(TIMER2_COMPA_vect)
     rx_next_bit();
 }
 
-// ================= Protocol / Decoding =================
+// ================= Protocol =================
 uint8_t checksum(uint8_t type, uint8_t len, uint8_t *data)
 {
     uint8_t c = type ^ len;
@@ -198,13 +195,13 @@ uint8_t checksum(uint8_t type, uint8_t len, uint8_t *data)
     return c;
 }
 
-// Build and send wrapper
+// Base function to send any data array
 void send_message(uint8_t type, uint8_t *data, uint8_t len)
 {
     uint8_t frame[64];
     uint8_t i = 0;
 
-    frame[i++] = 0x55; // Sync
+    frame[i++] = 0x55; // Start
     frame[i++] = type;
     frame[i++] = len;
     for (uint8_t j = 0; j < len; j++)
@@ -215,10 +212,25 @@ void send_message(uint8_t type, uint8_t *data, uint8_t len)
     start_send_frame(frame, i);
 }
 
-// State machine for decoding stream from ring buffer
+// *** NEW HELPER ***
+// Calculates length and sends string immediately
+void send_string_packet(char *str)
+{
+    uint8_t len = 0;
+    while (str[len] && len < 32)
+    {
+        len++;
+    }
+    // Type 0x01 = Text Message
+    send_message(0x01, (uint8_t *)str, len);
+}
+
+// ================= Decoding (Main Loop) =================
 void process_byte(uint8_t b)
 {
-    static uint8_t state = 0, type, len, cs, payload[32], payload_idx = 0;
+    static uint8_t state = 0, type, len, cs, payload_idx = 0;
+    // Buffer size 33 to allow for a safe null terminator at the end
+    static uint8_t payload[33];
 
     switch (state)
     {
@@ -236,9 +248,9 @@ void process_byte(uint8_t b)
         len = b;
         payload_idx = 0;
         if (len > 32)
-        { // Sanity check
+        {
             state = 0;
-            rx_reset_sync(); // Bad length, resync
+            rx_reset_sync();
         }
         else
         {
@@ -249,7 +261,10 @@ void process_byte(uint8_t b)
     case 3: // Payload
         payload[payload_idx++] = b;
         if (payload_idx >= len)
+        {
+            payload[payload_idx] = '\0'; // Null terminate for safe printing
             state = 4;
+        }
         break;
 
     case 4: // Checksum
@@ -263,24 +278,22 @@ void process_byte(uint8_t b)
             uint8_t calc_cs = checksum(type, len, payload);
             if (cs == calc_cs)
             {
-                // VALID PACKET
-                uart_send_string("RX: ");
+                uart_send_string("RX Msg: ");
                 uart_send_string((char *)payload);
                 uart_send_string("\r\n");
             }
             else
             {
-                uart_send_string("ERR: CS\r\n");
+                uart_send_string("Err: Checksum\r\n");
             }
         }
         else
         {
-            uart_send_string("ERR: Frame\r\n");
+            uart_send_string("Err: Frame End\r\n");
         }
 
-        // Packet finished (good or bad), reset logic
         state = 0;
-        rx_reset_sync(); // Force IR receiver to hunt for 0x55 again
+        rx_reset_sync(); // Hunt for next packet
         break;
     }
 }
@@ -294,28 +307,26 @@ int main()
     timer2_init();
     sei();
 
-    uart_send_string("System Boot...\r\n");
+    uart_send_string("--- IR Comms Ready ---\r\n");
 
     uint8_t counter = 0;
-    char msg[16];
+    char msg_buffer[32];
 
     while (1)
     {
-        // 1. Handle Transmission
+        // 1. Transmitter Logic
         if (!tx_busy)
         {
-            _delay_ms(500); // Send every 500ms
-            sprintf(msg, "Hi %d", counter++);
-            send_message(0x01, (uint8_t *)msg, 0); // Note: len calculation missing in original helper, fixed below
+            _delay_ms(1000);
 
-            // Re-sending string with proper length calculation for example:
-            uint8_t str_len = 0;
-            while (msg[str_len])
-                str_len++;
-            send_message(0x01, (uint8_t *)msg, str_len);
+            // Prepare a dynamic string
+            sprintf(msg_buffer, "Count: %d", counter++);
+
+            // Send it using the new helper
+            send_string_packet(msg_buffer);
         }
 
-        // 2. Handle Reception (Read from Ring Buffer)
+        // 2. Receiver Logic
         while (rx_head != rx_tail)
         {
             uint8_t b = rx_ring_buffer[rx_tail];
