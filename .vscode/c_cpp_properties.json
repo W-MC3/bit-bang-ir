@@ -10,6 +10,7 @@
             "includePath": [
                 "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/include",
                 "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/src",
+                "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/lib/IRcomm",
                 "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/.pio/libdeps/uno/Adafruit ILI9341",
                 "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/.pio/libdeps/uno/Adafruit GFX Library",
                 "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/.pio/libdeps/uno/Adafruit BusIO",
@@ -19,7 +20,6 @@
                 "C:/Users/danie/.platformio/packages/framework-arduino-avr/cores/arduino",
                 "C:/Users/danie/.platformio/packages/framework-arduino-avr/variants/standard",
                 "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/lib/I2C",
-                "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/lib/IRcomm",
                 "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/lib/UART",
                 "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/lib/nunchuk",
                 "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/.pio/libdeps/uno/Adafruit SH110X",
@@ -36,6 +36,7 @@
                 "path": [
                     "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/include",
                     "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/src",
+                    "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/lib/IRcomm",
                     "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/.pio/libdeps/uno/Adafruit ILI9341",
                     "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/.pio/libdeps/uno/Adafruit GFX Library",
                     "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/.pio/libdeps/uno/Adafruit BusIO",
@@ -45,7 +46,6 @@
                     "C:/Users/danie/.platformio/packages/framework-arduino-avr/cores/arduino",
                     "C:/Users/danie/.platformio/packages/framework-arduino-avr/variants/standard",
                     "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/lib/I2C",
-                    "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/lib/IRcomm",
                     "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/lib/UART",
                     "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/lib/nunchuk",
                     "C:/Users/danie/OneDrive/Documenten/GitHub/bit-bang-ir/.pio/libdeps/uno/Adafruit SH110X",

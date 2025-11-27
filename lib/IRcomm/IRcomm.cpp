@@ -3,26 +3,24 @@
 #include <avr/interrupt.h>
 #include <string.h>
 
-// Hardcoded for standard Arduino Uno/Nano (ATmega328P)
-// Adjust pins if using different hardware
 #define RX_PIN PD2
 #define RX_PORT PIND
 #define RX_DDR DDRD
 
 // ================= GLOBALS =================
+volatile unsigned long ir_system_timer = 0; // Onze eigen millis teller
+
 volatile uint8_t tx_busy = 0;
 volatile uint8_t tx_frame[64];
 volatile uint8_t tx_len;
 volatile uint8_t tx_idx = 0;
 volatile uint8_t tx_bit_pos = 0;
 
-// RX Ring Buffer
 #define RX_BUF_SIZE 64
 volatile uint8_t rx_ring_buffer[RX_BUF_SIZE];
 volatile uint8_t rx_head = 0;
 volatile uint8_t rx_tail = 0;
 
-// Received Message Holding Buffer (for the user)
 char last_received_msg[IR_MAX_MSG_LEN + 1];
 volatile uint8_t msg_available = 0;
 
@@ -39,7 +37,7 @@ void carrier_init()
     DDRD |= (1 << PD6);
     TCCR0A = (1 << WGM01);
     TCCR0B = (1 << CS00);
-    OCR0A = 209; // ~38kHz at 16MHz
+    OCR0A = 209;
     carrier_off();
 }
 
@@ -68,14 +66,14 @@ void tx_next_bit()
 }
 
 // ================= INTERNAL: RX Logic =================
-volatile uint8_t rx_state = 0; // 0=Sync, 1=Data
+volatile uint8_t rx_state = 0;
 volatile uint8_t rx_byte_buffer = 0;
 volatile uint8_t rx_bit_count = 0;
 
 void rx_next_bit()
 {
     uint8_t raw_pin = (RX_PORT & (1 << RX_PIN));
-    uint8_t bit_val = raw_pin ? 0 : 1; // Active Low
+    uint8_t bit_val = raw_pin ? 0 : 1;
     rx_byte_buffer = (rx_byte_buffer << 1) | bit_val;
 
     if (rx_state == 0)
@@ -84,7 +82,6 @@ void rx_next_bit()
         {
             rx_state = 1;
             rx_bit_count = 0;
-            // Add to ring buffer
             uint8_t next_head = (rx_head + 1) % RX_BUF_SIZE;
             if (next_head != rx_tail)
             {
@@ -114,6 +111,8 @@ void rx_next_bit()
 // ================= INTERNAL: Timer =================
 ISR(TIMER2_COMPA_vect)
 {
+    ir_system_timer++; // HIER TELLEN WE DE TIJD (1ms)
+
     if (tx_busy)
         tx_next_bit();
     rx_next_bit();
@@ -150,7 +149,7 @@ void process_byte(uint8_t b)
         {
             state = 0;
             rx_state = 0;
-        } // Reset
+        }
         else
             state = (len > 0) ? 3 : 4;
         break;
@@ -169,12 +168,11 @@ void process_byte(uint8_t b)
     case 5:
         if (b == 0xAA && cs == checksum(type, len, payload))
         {
-            // Valid Message Received -> Copy to public buffer
             strcpy(last_received_msg, (char *)payload);
             msg_available = 1;
         }
         state = 0;
-        rx_state = 0; // Reset sync
+        rx_state = 0;
         break;
     }
 }
@@ -182,20 +180,30 @@ void process_byte(uint8_t b)
 // ================= PUBLIC API =================
 void ir_init()
 {
-    RX_DDR &= ~(1 << RX_PIN); // RX Input
-    carrier_init();           // TX Init
+    RX_DDR &= ~(1 << RX_PIN);
+    carrier_init();
 
-    // Timer 2 Init
     TCCR2A = (1 << WGM21);
     TCCR2B = (1 << CS22);
     OCR2A = 249;
     TIMSK2 |= (1 << OCIE2A);
 }
 
-void ir_send(char *str)
+// DEZE FUNCTIE GEBRUIK JE STRAKS IN MAIN IPV MILLIS()
+unsigned long ir_millis()
+{
+    unsigned long m;
+    uint8_t oldSREG = SREG;
+    cli();
+    m = ir_system_timer;
+    SREG = oldSREG;
+    return m;
+}
+
+void ir_send(const char *str)
 {
     if (tx_busy)
-        return; // Simple collision avoidance
+        return;
 
     uint8_t len = 0;
     while (str[len] && len < IR_MAX_MSG_LEN)
@@ -203,7 +211,7 @@ void ir_send(char *str)
 
     uint8_t i = 0;
     tx_frame[i++] = 0x55;
-    tx_frame[i++] = 0x01; // Type String
+    tx_frame[i++] = 0x01;
     tx_frame[i++] = len;
     for (uint8_t k = 0; k < len; k++)
         tx_frame[i++] = str[k];
@@ -226,13 +234,12 @@ uint8_t ir_read(char *buffer)
     if (!msg_available)
         return 0;
     strcpy(buffer, last_received_msg);
-    msg_available = 0; // Clear flag
+    msg_available = 0;
     return strlen(buffer);
 }
 
 void ir_update()
 {
-    // Process ring buffer
     while (rx_head != rx_tail)
     {
         uint8_t b = rx_ring_buffer[rx_tail];

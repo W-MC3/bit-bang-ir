@@ -2,7 +2,6 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
 
-// Include the IR Library
 extern "C"
 {
 #include "IRComm.h"
@@ -18,7 +17,7 @@ extern "C"
 
 Adafruit_ILI9341 tft(TFT_CS, TFT_DC, TFT_RST);
 
-// --- FORWARD DECLARATION (This fixes the error) ---
+// Forward declaration
 void drawBall(int x, int y, uint16_t color);
 
 uint8_t joyX_raw = 128;
@@ -31,8 +30,6 @@ int remoteX = 160, remoteY = 120;
 int prevRemoteX = 160, prevRemoteY = 120;
 
 unsigned long lastSend = 0;
-
-// Buffers
 char msgOut[32];
 char msgIn[32];
 
@@ -70,7 +67,8 @@ void readNunchuck()
 
 void setup()
 {
-    ir_init();
+    ir_init();                // Dit start Timer2 (1ms) en Timer0 (38kHz)
+    pinMode(2, INPUT_PULLUP); // Zorg dat de RX pin stabiel is
 
     Wire.begin();
     nunchuckInit();
@@ -78,18 +76,21 @@ void setup()
     tft.setRotation(1);
     tft.fillScreen(WHITE);
 
-    // Now this works because we declared it above
     drawBall(myX, myY, RED);
     drawBall(remoteX, remoteY, BLUE);
+
+    sei(); // Interrupts aan
 }
 
 void loop()
 {
-    // 1. Update IR
+    // 1. IR Update (Elke loop!)
     ir_update();
 
-    // 2. Read Input
+    // 2. Lees Nunchuk
     readNunchuck();
+
+    // Mapping en Constrain
     int joyX = map(joyX_raw, 0, 255, 160 + 100, 160 - 100);
     int joyY = map(joyY_raw, 0, 255, 120 + 100, 120 - 100);
 
@@ -98,15 +99,16 @@ void loop()
     myX = constrain(joyX, 0, tft.width() - 1);
     myY = constrain(joyY, 0, tft.height() - 1);
 
-    // 3. Send
-    if (millis() - lastSend >= 50)
+    // 3. Verzenden (Gebruik ir_millis ipv millis)
+    // Interval verhoogd naar 100ms omdat verzenden ~80ms duurt
+    if (ir_millis() - lastSend >= 100)
     {
         sprintf(msgOut, "%d,%d", myX, myY);
         ir_send(msgOut);
-        lastSend = millis();
+        lastSend = ir_millis();
     }
 
-    // 4. Receive
+    // 4. Ontvangen
     if (ir_available())
     {
         ir_read(msgIn);
@@ -125,7 +127,7 @@ void loop()
         }
     }
 
-    // 5. Draw
+    // 5. Tekenen
     if (myX != prevMyX || myY != prevMyY)
     {
         drawBall(prevMyX, prevMyY, WHITE);
