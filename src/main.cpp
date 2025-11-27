@@ -1,62 +1,144 @@
-#include <avr/io.h>
-#include <avr/interrupt.h>
-#include <util/delay.h>
-#include <stdio.h>
-#include "IRComm.h"
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
 
-// Simple UART for debug output to PC
-void debug_init()
+// Include the IR Library
+extern "C"
 {
-    UBRR0H = 0;
-    UBRR0L = 103; // 9600 baud @ 16MHz
-    UCSR0B = (1 << TXEN0);
-    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+#include "IRComm.h"
 }
 
-void debug_print(char *s)
+#define WHITE 0xFFFF
+#define RED 0xF800
+#define BLUE 0x001F
+
+#define TFT_CS 10
+#define TFT_DC 9
+#define TFT_RST 8
+
+Adafruit_ILI9341 tft(TFT_CS, TFT_DC, TFT_RST);
+
+// --- FORWARD DECLARATION (This fixes the error) ---
+void drawBall(int x, int y, uint16_t color);
+
+uint8_t joyX_raw = 128;
+uint8_t joyY_raw = 128;
+
+int myX = 160, myY = 120;
+int prevMyX = 160, prevMyY = 120;
+
+int remoteX = 160, remoteY = 120;
+int prevRemoteX = 160, prevRemoteY = 120;
+
+unsigned long lastSend = 0;
+
+// Buffers
+char msgOut[32];
+char msgIn[32];
+
+void nunchuckInit()
 {
-    while (*s)
+    Wire.beginTransmission(0x52);
+    Wire.write(0xF0);
+    Wire.write(0x55);
+    Wire.endTransmission();
+    delay(1);
+    Wire.beginTransmission(0x52);
+    Wire.write(0xFB);
+    Wire.write(0x00);
+    Wire.endTransmission();
+    delay(1);
+}
+
+void readNunchuck()
+{
+    Wire.beginTransmission(0x52);
+    Wire.write(0x00);
+    Wire.endTransmission();
+    delayMicroseconds(1000);
+    Wire.requestFrom(0x52, 6);
+    if (Wire.available() == 6)
     {
-        while (!(UCSR0A & (1 << UDRE0)))
-            ;
-        UDR0 = *s++;
+        joyX_raw = Wire.read();
+        joyY_raw = Wire.read();
+        Wire.read();
+        Wire.read();
+        Wire.read();
+        Wire.read();
     }
 }
 
-int main()
+void setup()
 {
-    debug_init();
-    ir_init(); // Start the IR library
-    sei();     // Enable Interrupts
+    ir_init();
 
-    debug_print("IR Library Demo\n");
+    Wire.begin();
+    nunchuckInit();
+    tft.begin();
+    tft.setRotation(1);
+    tft.fillScreen(WHITE);
 
-    char msg_out[32];
-    char msg_in[32];
-    int val1 = 0, val2 = 100;
+    // Now this works because we declared it above
+    drawBall(myX, myY, RED);
+    drawBall(remoteX, remoteY, BLUE);
+}
 
-    while (1)
+void loop()
+{
+    // 1. Update IR
+    ir_update();
+
+    // 2. Read Input
+    readNunchuck();
+    int joyX = map(joyX_raw, 0, 255, 160 + 100, 160 - 100);
+    int joyY = map(joyY_raw, 0, 255, 120 + 100, 120 - 100);
+
+    prevMyX = myX;
+    prevMyY = myY;
+    myX = constrain(joyX, 0, tft.width() - 1);
+    myY = constrain(joyY, 0, tft.height() - 1);
+
+    // 3. Send
+    if (millis() - lastSend >= 50)
     {
-        // --- SENDING ---
-        // Send data every 500ms
-        _delay_ms(500);
+        sprintf(msgOut, "%d,%d", myX, myY);
+        ir_send(msgOut);
+        lastSend = millis();
+    }
 
-        sprintf(msg_out, "%d,%d", val1++, val2++);
-        ir_send(msg_out);
+    // 4. Receive
+    if (ir_available())
+    {
+        ir_read(msgIn);
+        char *commaPtr = strchr(msgIn, ',');
 
-        // --- RECEIVING ---
-        // Must call update frequently to process bits into bytes
-        ir_update();
-
-        // Check if we got a full message
-        if (ir_available())
+        if (commaPtr != NULL)
         {
-            ir_read(msg_in); // Copy message to our buffer
+            *commaPtr = 0;
+            int rxX = atoi(msgIn);
+            int rxY = atoi(commaPtr + 1);
 
-            // Print to PC
-            debug_print("Recv: ");
-            debug_print(msg_in);
-            debug_print("\n");
+            prevRemoteX = remoteX;
+            prevRemoteY = remoteY;
+            remoteX = constrain(rxX, 0, tft.width() - 1);
+            remoteY = constrain(rxY, 0, tft.height() - 1);
         }
     }
+
+    // 5. Draw
+    if (myX != prevMyX || myY != prevMyY)
+    {
+        drawBall(prevMyX, prevMyY, WHITE);
+        drawBall(myX, myY, RED);
+    }
+    if (remoteX != prevRemoteX || remoteY != prevRemoteY)
+    {
+        drawBall(prevRemoteX, prevRemoteY, WHITE);
+        drawBall(remoteX, remoteY, BLUE);
+    }
+}
+
+void drawBall(int x, int y, uint16_t color)
+{
+    tft.fillCircle(x, y, 6, color);
 }
